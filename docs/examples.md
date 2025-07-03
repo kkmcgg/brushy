@@ -67,3 +67,71 @@ npm run dev
 ```
 
 Supported browsers: **Chrome 135+** (Firefox/Safari soon).
+
+---
+
+## 4. Export gaussians to a `.ply` file
+
+```rust
+use brush_render::gaussian_splats::Splats;
+use brush_dataset::splat_export::splat_to_ply;
+use brush_render::burn_init_setup;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let device = burn_init_setup().await;
+
+    // Imagine we already trained or created some splats
+    let splats = Splats::from_xyz_rgba(
+        &[[0.0, 0.0, 0.0, 1.0, 0.2, 0.8, 1.0]],
+        &device,
+    );
+
+    // Write to the widely-supported gSplat (*.ply) format
+    let ply_bytes = splat_to_ply(splats).await?;
+    std::fs::write("scene.ply", ply_bytes)?;
+    Ok(())
+}
+```
+
+---
+
+## 5. Embed Brush in an existing **egui** desktop app
+
+```rust
+use brush_render::{gaussian_splats::Splats, camera::Camera, burn_init_setup};
+use brush_ui::burn_texture::BurnTexture;
+use glam::{Vec3, Vec2, Quat};
+
+struct MyViewer {
+    cam: Camera,
+    splats: Splats<brush_render::MainBackend>,
+    tex: BurnTexture,
+}
+
+impl MyViewer {
+    fn new(renderer: &eframe::wgpu::Renderer, device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+        let burn_dev = brush_render::burn_init_device(
+            renderer.adapter().clone(),
+            device.clone(),
+            queue.clone(),
+        );
+
+        let splats = Splats::from_xyz_rgba(&[[0.0, 0.0, 0.0, 1., 1., 1., 1.]], &burn_dev);
+        let cam = Camera::look_at(Vec3::new(0.0, 0.0, -4.0), Vec3::ZERO);
+        let tex = BurnTexture::new(renderer.clone(), device.clone(), queue.clone());
+        Self { cam, splats, tex }
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui) {
+        // Render on demand (e.g. every frame)
+        let (img, _aux) = self
+            .splats
+            .render(&self.cam, glam::uvec2(512, 512), Vec3::ZERO, None);
+        let tid = self.tex.update_texture(img);
+        ui.image(tid, Vec2::splat(512.0));
+    }
+}
+```
+
+The helper type `BurnTexture` converts a Burn tensor into a GPU texture that `egui` can display. The heavy-lifting (projection, sorting, rasterisation) happens entirely on the GPU, so the viewer remains highly interactive.
